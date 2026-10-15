@@ -1,5 +1,5 @@
 <!-- knowledge
-last_checked: "2026-10-08T17:57:51Z"
+last_checked: "2026-10-15T00:58:08Z"
 -->
 # Slim LLM Example
 
@@ -28,6 +28,10 @@ cp credentials.example.json credentials.json
 Fill in `credentials.json`. See the [Git ignore rule](../../.gitignore) and
 [PR file check](../../.github/workflows/pr.yml) for local-configuration exclusions.
 
+Provide a Slim executable through `SLIM_BINARY_PATH`, place an executable named
+`slim` in this directory, or put `dify-plugin-daemon-slim` on `PATH`. Both local
+and remote modes require this executable.
+
 ## DSL Import
 
 ```bash
@@ -42,5 +46,6 @@ uv run python code.py
 uv run python code.py "Reply with only the word Graphon."
 ```
 
-Both examples invoke a real model. Use [settings.py](settings.py) to choose local
-or remote daemon setup and resolve configuration errors.
+Running either workflow invokes a real model; `--help` only displays command
+usage and needs no credentials or Slim executable. Use [settings.py](settings.py)
+to choose local or remote daemon setup and resolve configuration errors.

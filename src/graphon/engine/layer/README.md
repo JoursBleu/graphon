@@ -1,5 +1,5 @@
 <!-- knowledge
-last_checked: "2026-10-08T17:57:51Z"
+last_checked: "2026-10-15T00:58:08Z"
 -->
 # Layers
 
@@ -12,7 +12,7 @@ managers to activate tracing context; keep logical spans alive across container
 suspension without carrying context tokens between workers. The
 [worker](../worker/worker.py) owns task execution, and
 [context tests](../../../../tests/engine/test_layer_node_run_context.py) enforce
-hook ordering and failure isolation.
+nested context binding and failure isolation.
 
 ## Usage
 
