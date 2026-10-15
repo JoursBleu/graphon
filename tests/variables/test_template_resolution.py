@@ -1,3 +1,5 @@
+import pytest
+
 from graphon.runtime.read_only_wrappers import ReadOnlyVariablePoolWrapper
 from graphon.runtime.variable_pool import VariablePool
 from graphon.variables.segments import ArrayObjectSegment
@@ -5,6 +7,31 @@ from graphon.variables.template_resolution import convert_template
 
 
 class TestConvertTemplate:
+    @pytest.mark.parametrize(
+        "node_id",
+        ["input-check", "550e8400-e29b-41d4-a716-446655440000", "-input-"],
+    )
+    def test_resolves_hyphenated_node_ids(self, node_id: str) -> None:
+        pool = VariablePool.empty()
+        pool.add((node_id, "result"), {"word": "red"})
+        pool.add(("input_check", "result"), {"word": "blue"})
+        template = "{{#" + node_id + ".result.word#}} / {{#input_check.result.word#}}"
+
+        rendered = convert_template(ReadOnlyVariablePoolWrapper(pool), template)
+
+        assert rendered.text == "red / blue"
+
+    @pytest.mark.parametrize(
+        "selector",
+        ["input check.word", "input-check.bad-name", "a" * 51 + ".word"],
+    )
+    def test_preserves_unsupported_references(self, selector: str) -> None:
+        pool = VariablePool.empty()
+        pool.add(selector.split("."), "must not be substituted")
+        template = "{{#" + selector + "#}}"
+
+        assert convert_template(pool, template).text == template
+
     def test_resolves_variables_from_read_only_pool(self) -> None:
         pool = VariablePool.empty()
         pool.add(("start", "name"), "Joe")
