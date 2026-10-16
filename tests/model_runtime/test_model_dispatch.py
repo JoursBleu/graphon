@@ -2,7 +2,8 @@ import inspect
 from collections.abc import Generator, Mapping, Sequence
 from decimal import Decimal
 from io import BytesIO
-from typing import IO, Any, cast
+from types import MappingProxyType
+from typing import IO, Any, cast, get_type_hints
 
 import pytest
 from pydantic import JsonValue
@@ -62,7 +63,23 @@ from graphon.model_runtime.model_providers.model_provider_factory import (
     ModelProviderFactory,
 )
 from graphon.model_runtime.protocols.llm_runtime import LLMModelRuntime
-from graphon.model_runtime.protocols.tts_runtime import TTSChunk, TTSModelVoice
+from graphon.model_runtime.protocols.moderation_runtime import (
+    ModerationModelRuntime,
+)
+from graphon.model_runtime.protocols.provider_runtime import ModelProviderRuntime
+from graphon.model_runtime.protocols.rerank_runtime import RerankModelRuntime
+from graphon.model_runtime.protocols.runtime import ModelRuntime
+from graphon.model_runtime.protocols.speech_to_text_runtime import (
+    SpeechToTextModelRuntime,
+)
+from graphon.model_runtime.protocols.text_embedding_runtime import (
+    TextEmbeddingModelRuntime,
+)
+from graphon.model_runtime.protocols.tts_runtime import (
+    TTSChunk,
+    TTSModelRuntime,
+    TTSModelVoice,
+)
 
 
 class _ProviderRuntimeStub:
@@ -528,6 +545,158 @@ class _SpeechToTextRuntimeStub(_ProviderRuntimeStub):
     ) -> str:
         _ = provider, model, credentials, file, request_metadata
         return "transcript"
+
+
+class _ModelRuntimeStub(
+    _LLMRuntimeStub,
+    _EmbeddingRuntimeStub,
+    _TTSRuntimeStub,
+    _ModerationRuntimeStub,
+    _RerankRuntimeStub,
+    _SpeechToTextRuntimeStub,
+):
+    """Legacy aggregate adapter without remote catalog support."""
+
+
+class _DefaultCatalogRuntimeStub(_ModelRuntimeStub, ModelRuntime):
+    """Explicit aggregate adapter inheriting the unsupported-catalog default."""
+
+
+class _RemoteCatalogRuntimeStub(_ModelRuntimeStub):
+    def fetch_models(
+        self,
+        *,
+        provider: str,
+        model_type: ModelType,
+        credentials: Mapping[str, Any],
+    ) -> list[AIModelEntity]:
+        self.model_schema_requests.append({
+            "provider": provider,
+            "model_type": model_type,
+            "credentials": credentials,
+        })
+        return [] if self._model_schema is None else [self._model_schema]
+
+
+def test_model_runtime_fetch_models_contract() -> None:
+    signature = inspect.signature(ModelRuntime.fetch_models)
+    assert list(signature.parameters) == [
+        "self",
+        "provider",
+        "model_type",
+        "credentials",
+    ]
+    for name in ("provider", "model_type", "credentials"):
+        assert signature.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+        assert signature.parameters[name].default is inspect.Parameter.empty
+    assert get_type_hints(ModelRuntime.fetch_models) == {
+        "provider": str,
+        "model_type": ModelType,
+        "credentials": Mapping[str, Any],
+        "return": list[AIModelEntity],
+    }
+
+
+def test_remote_catalog_runtime_accepts_read_only_credentials() -> None:
+    schema = AIModelEntity(
+        model="test-model",
+        label=I18nObject(en_US="Test Model"),
+        model_type=ModelType.LLM,
+        fetch_from="predefined-model",
+        model_properties={},
+    )
+    runtime = _RemoteCatalogRuntimeStub(model_schema=schema)
+    credentials: Mapping[str, Any] = MappingProxyType({"region": "test"})
+
+    assert isinstance(runtime, ModelRuntime)
+    assert runtime.fetch_models(
+        provider="test-provider",
+        model_type=ModelType.LLM,
+        credentials=credentials,
+    ) == [schema]
+    assert runtime.model_schema_requests == [
+        {
+            "provider": "test-provider",
+            "model_type": ModelType.LLM,
+            "credentials": credentials,
+        }
+    ]
+    assert dict(credentials) == {"region": "test"}
+
+
+def test_model_runtime_default_catalog_fails_for_remote_provider() -> None:
+    provider = ProviderEntity(
+        provider="test-provider",
+        label=I18nObject(en_US="Test Provider"),
+        supported_model_types=[ModelType.LLM],
+        configurate_methods=[],
+        remote_model_catalog=True,
+    )
+    runtime = _DefaultCatalogRuntimeStub(providers=[provider])
+
+    assert isinstance(runtime, ModelRuntime)
+    with pytest.raises(
+        NotImplementedError, match="Remote model catalog is not supported"
+    ):
+        runtime.fetch_models(
+            provider=provider.provider,
+            model_type=ModelType.LLM,
+            credentials=MappingProxyType({}),
+        )
+
+
+def test_legacy_runtime_keeps_static_provider_and_capability_support() -> None:
+    schema = AIModelEntity(
+        model="test-model",
+        label=I18nObject(en_US="Test Model"),
+        model_type=ModelType.LLM,
+        fetch_from="predefined-model",
+        model_properties={},
+    )
+    provider = ProviderEntity(
+        provider="test-provider",
+        label=I18nObject(en_US="Test Provider"),
+        supported_model_types=[ModelType.LLM],
+        configurate_methods=[],
+        models=[schema],
+    )
+    runtime = _ModelRuntimeStub(providers=[provider])
+
+    assert not hasattr(runtime, "fetch_models")
+    assert isinstance(runtime, ModelProviderRuntime)
+    assert isinstance(runtime, LLMModelRuntime)
+    assert isinstance(runtime, TextEmbeddingModelRuntime)
+    assert isinstance(runtime, TTSModelRuntime)
+    assert isinstance(runtime, ModerationModelRuntime)
+    assert isinstance(runtime, RerankModelRuntime)
+    assert isinstance(runtime, SpeechToTextModelRuntime)
+    factory = ModelProviderFactory(runtime=runtime)
+    assert factory.get_models(model_type=ModelType.LLM) == [
+        provider.to_simple_provider()
+    ]
+    assert factory.get_models()[0].models == [schema]
+    assert factory.get_models()[0].remote_model_catalog is False
+
+
+@pytest.mark.parametrize("remote_model_catalog", [False, True])
+def test_model_provider_factory_preserves_catalog_flag_without_fetching(
+    remote_model_catalog: bool,
+) -> None:
+    provider = ProviderEntity(
+        provider="test-provider",
+        label=I18nObject(en_US="Test Provider"),
+        supported_model_types=[ModelType.LLM],
+        configurate_methods=[],
+        remote_model_catalog=remote_model_catalog,
+    )
+    runtime = _DefaultCatalogRuntimeStub(providers=[provider])
+
+    providers = ModelProviderFactory(runtime=runtime).get_models(
+        model_type=ModelType.LLM
+    )
+
+    assert providers[0].remote_model_catalog is remote_model_catalog
+    assert providers[0].models == []
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 
+from graphon.model_runtime.entities.model_entities import AIModelEntity, ModelType
 from graphon.model_runtime.protocols.llm_runtime import LLMModelRuntime
 from graphon.model_runtime.protocols.moderation_runtime import (
     ModerationModelRuntime,
@@ -27,3 +29,19 @@ class ModelRuntime(
     Protocol,
 ):
     """Aggregate runtime for adapters that implement every model capability."""
+
+    def fetch_models(
+        self,
+        *,
+        provider: str,
+        model_type: ModelType,
+        credentials: Mapping[str, Any],
+    ) -> list[AIModelEntity]:
+        """Fetch a credential-scoped catalog for an opted-in remote provider.
+
+        Hosts call this only when the provider declares ``remote_model_catalog``.
+        Adapters without discovery support fail explicitly rather than returning
+        an empty catalog. Selection, schema caching, and refresh belong to hosts.
+        """
+        msg = "Remote model catalog is not supported by this runtime."
+        raise NotImplementedError(msg)
