@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import cast, final
 
 from graphon.engine_events.base import NodeEvent
-from graphon.engine_events.node import NodeRunFailedEvent
+from graphon.engine_events.node import NodeRunFailedEvent, NodeRunVariableUpdatedEvent
 from graphon.enums import (
     BuiltinNodeTypes,
     ErrorHandleMode,
@@ -30,6 +30,7 @@ from graphon.runtime.execution import ROOT_FRAME_ID
 from graphon.runtime.ready_queue import ResumeTask
 from graphon.runtime.runtime_state import RuntimeState
 from graphon.variables.segments import NoneSegment, SerializableSegment
+from graphon.variables.variables import Variable
 
 from ...frame import ExecutionFrame, FrameRegistry
 
@@ -127,6 +128,12 @@ class IterationContainerHandler:
     ) -> None:
         frame_state = self._iteration_frame(frame.frame_id)
         run_state = self._iteration_run(frame_state.parent_invocation_id)
+        if isinstance(event, NodeRunVariableUpdatedEvent):
+            self._write_back_host_variable(
+                frame=frame,
+                parent_frame=self._frame_registry[run_state.frame_id],
+                variable=event.variable,
+            )
         iteration_metadata = {
             WorkflowNodeExecutionMetadataKey.ITERATION_ID: run_state.node_id,
             WorkflowNodeExecutionMetadataKey.ITERATION_INDEX: frame_state.index,
@@ -411,6 +418,32 @@ class IterationContainerHandler:
             ),
         )
         child_frame.scheduler.enqueue_node(run_state.root_node_id)
+
+    def _write_back_host_variable(
+        self,
+        *,
+        frame: ExecutionFrame,
+        parent_frame: ExecutionFrame,
+        variable: Variable,
+    ) -> None:
+        """Pass a round's write to a host variable already held by its parent.
+
+        The pool retains node ownership when copied or serialized, so rounds
+        keep inherited node outputs and Loop variables private. Independent
+        workflows have their own pools and cannot change that ownership.
+        Frame creation deep-copies variables, so the identity check confirms
+        that inner containers passed the write on. Parallel rounds miss each
+        other's writes, and the last write to a variable wins.
+        """
+        selector = variable.selector
+        parent_pool = parent_frame.state.variable_pool
+        if (
+            selector[0] in frame.state.variable_pool.node_ids
+            or frame.state.variable_pool.get_variable(selector) is not variable
+            or parent_pool.get_variable(selector) is None
+        ):
+            return
+        parent_pool.add(selector, variable)
 
     def _build_iteration_result(
         self,
