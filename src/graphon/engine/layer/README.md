@@ -1,5 +1,5 @@
 <!-- knowledge
-last_checked: "2026-10-22T01:04:05Z"
+last_checked: "2026-10-27T13:30:50Z"
 -->
 # Layers
 
@@ -13,6 +13,8 @@ suspension without carrying context tokens between workers. The
 [worker](../worker/worker.py) owns task execution, and
 [context tests](../../../../tests/engine/test_layer_node_run_context.py) enforce
 nested context binding and failure isolation.
+
+See [raw frame observations](../../../../ARCHITECTURE.md#raw-frame-observations) for variable commits and frame lifecycle ordering shared by layers and the public event stream.
 
 ## Usage
 
